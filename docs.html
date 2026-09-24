@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Delivery System API - Docs</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+  <style>body { margin: 0; } .swagger-ui .topbar { display: none; }</style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    window.ui = SwaggerUIBundle({
+      url: 'openapi.yaml',
+      dom_id: '#swagger-ui',
+      deepLinking: true,
+      persistAuthorization: true,
+      displayRequestDuration: true,
+      docExpansion: 'list',
+      tryItOutEnabled: true,
+      // After a successful POST /login, use the returned token for every other call.
+      responseInterceptor: function (res) {
+        try {
+          if (res.ok && /\/api\/login$/.test(res.url)) {
+            var body = typeof res.body === 'object' ? res.body : JSON.parse(res.text);
+            if (body && body.token) window.ui.preauthorizeApiKey('bearerAuth', body.token);
+          }
+        } catch (e) {}
+        return res;
+      }
+    });
+  </script>
+</body>
+</html>

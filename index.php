@@ -38,6 +38,18 @@ header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');
 $method = $_SERVER['REQUEST_METHOD'];
 if ($method === 'OPTIONS') { http_response_code(204); exit; }
 
+// ---------- API docs (Swagger UI) ----------
+if ($method === 'GET' && $path === '/openapi.yaml') {
+    header('Content-Type: application/yaml; charset=utf-8');
+    readfile(__DIR__ . '/openapi.yaml');
+    exit;
+}
+if ($method === 'GET' && ($path === '/docs' || $path === '/')) {
+    header('Content-Type: text/html; charset=utf-8');
+    readfile(__DIR__ . '/docs.html');
+    exit;
+}
+
 // ---------- Routes ----------
 $routes = [
     // Auth
