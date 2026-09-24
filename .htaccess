@@ -1,0 +1,8 @@
+# Apache: send every request to index.php (except real files in /uploads)
+RewriteEngine On
+RewriteRule ^(data|logs|src)/ - [F,L]
+RewriteRule ^config\.php$ - [F,L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^ index.php [QSA,L]
+# Pass the Authorization header through to PHP
+SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
