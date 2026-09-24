@@ -13,6 +13,18 @@ php -S 0.0.0.0:8000 index.php
 
 Check it: open `http://localhost:8000/api/health`.
 
+**API docs (Swagger UI):** open `http://localhost:8000/docs` to see every endpoint with its fields and examples, and send real requests with *Try it out*. Run `POST /login` first and the token is applied to the other calls automatically. The spec is in `openapi.yaml`.
+
+**Sample data:** run `php seed.php` once (with Docker: `docker run --rm -v "$PWD":/app -w /app php:8.3-cli php seed.php`). It adds 4 delivery boys and 12 orders across every status. Safe to run again; nothing is duplicated.
+
+| Login | Password | Role |
+|---|---|---|
+| admin@delivery.local | admin@123 | admin |
+| ram@gmail.com | ram@123 | delivery (2 active orders) |
+| omm@gmail.com | omm@123 | delivery |
+| suresh@gmail.com | suresh@123 | delivery |
+| vikas@gmail.com | vikas@123 | delivery (inactive, login refused) |
+
 On first request the API adds its tables to `info.sqlite` automatically. Your existing `table1` keeps its data. Two columns are added to it: `role` (`admin` / `delivery`) and `is_active`.
 
 * Ram (`ram@gmail.com` / `ram@123`) and Omm (`omm@gmail.com` / `omm@123`) become **delivery boys**. Their plain-text passwords are converted to secure hashes the first time they log in.

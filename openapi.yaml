@@ -1,0 +1,684 @@
+openapi: 3.0.3
+info:
+  title: Delivery System API
+  version: 1.0.0
+  description: |
+    REST API for the Delivery Management System (PHP + SQLite).
+
+    **How to test here**
+    1. Open **Auth → POST /login** → *Try it out* → *Execute*.
+       The token from the response is applied automatically (the lock icons close).
+    2. Call any admin endpoint. To act as a delivery boy, log in again with a delivery boy's email.
+
+    **Order status flow**
+
+    `New` → *validate* → `Pending` → *assign* → *start* → `OutForDelivery` → *deliver* → `Delivered`
+
+    `Pending` / `OutForDelivery` → *cancel* → `Cancelled`
+
+    Every response has `success: true|false`. Errors look like `{"success": false, "message": "..."}`.
+
+    Default admin: `admin@delivery.local` / `admin@123`
+servers:
+  - url: ./api
+    description: This server
+
+tags:
+  - name: Auth
+    description: Login, logout, current user
+  - name: Admin - Delivery boys
+    description: Manage delivery boy accounts (admin token)
+  - name: Admin - Orders
+    description: Create, validate, assign, bill and cancel orders (admin token)
+  - name: Delivery boy app
+    description: Endpoints used by the Android app (delivery boy token)
+  - name: Shopify
+    description: Webhook that creates orders from Shopify
+  - name: System
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Health check
+      description: Returns the server time. No token needed.
+      security: []
+      responses:
+        '200':
+          description: Server is up
+          content:
+            application/json:
+              example: { success: true, time: '2026-09-24 11:01:06' }
+
+  # ---------------------------------------------------------------- Auth
+  /login:
+    post:
+      tags: [Auth]
+      summary: Log in (admin or delivery boy)
+      description: Returns a Bearer token valid for 30 days. Use it in the `Authorization` header.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+            examples:
+              admin:
+                summary: Admin
+                value: { email: admin@delivery.local, password: admin@123 }
+              deliveryBoy:
+                summary: Delivery boy
+                value: { email: ram@gmail.com, password: ram@123 }
+      responses:
+        '200':
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  token: { type: string }
+                  expires_at: { type: string, example: '2026-10-24 11:01:09' }
+                  user: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /logout:
+    post:
+      tags: [Auth]
+      summary: Log out (invalidates the current token)
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      responses:
+        '200':
+          description: The logged-in user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  user: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /me/password:
+    post:
+      tags: [Auth]
+      summary: Change own password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [old_password, new_password]
+              properties:
+                old_password: { type: string, example: admin@123 }
+                new_password: { type: string, minLength: 6, example: newpass@123 }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '400': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+
+  # ------------------------------------------------- Admin: delivery boys
+  /admin/delivery-boys:
+    get:
+      tags: [Admin - Delivery boys]
+      summary: List delivery boys with their order counts
+      parameters:
+        - name: active
+          in: query
+          description: '`1` = only active accounts'
+          schema: { type: string, enum: ['1'] }
+      responses:
+        '200':
+          description: Delivery boys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/User'
+                        - type: object
+                          properties:
+                            pending_count: { type: integer }
+                            delivered_count: { type: integer }
+                            cancelled_count: { type: integer }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Admin - Delivery boys]
+      summary: Create a delivery boy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fname, lname, email, password]
+              properties:
+                fname: { type: string, example: Ram }
+                lname: { type: string, example: Patil }
+                email: { type: string, format: email, example: ram@gmail.com }
+                password: { type: string, example: ram@123 }
+                phone: { type: string, example: '9876543210' }
+                city: { type: string, example: Nagpur }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data: { $ref: '#/components/schemas/User' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+
+  /admin/delivery-boys/{id}:
+    patch:
+      tags: [Admin - Delivery boys]
+      summary: Update or deactivate a delivery boy
+      description: Send only the fields to change. Setting `is_active` to false also logs the user out.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fname: { type: string }
+                lname: { type: string }
+                email: { type: string, format: email }
+                phone: { type: string }
+                city: { type: string }
+                password: { type: string }
+                is_active: { type: boolean }
+            example: { phone: '9000000000', is_active: true }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+
+  # ------------------------------------------------------- Admin: orders
+  /admin/orders:
+    get:
+      tags: [Admin - Orders]
+      summary: List orders (newest first)
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/Status' }
+        - name: boy_id
+          in: query
+          description: Orders assigned to this delivery boy
+          schema: { type: integer }
+        - name: date
+          in: query
+          description: Created on this day (YYYY-MM-DD)
+          schema: { type: string, format: date }
+        - name: q
+          in: query
+          description: Search by order id, Shopify id or customer name
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200': { $ref: '#/components/responses/OrderList' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Admin - Orders]
+      summary: Create an order manually
+      description: Status starts as `New`. `total_amount` is computed from items if omitted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_name, items]
+              properties:
+                customer_name: { type: string }
+                phone: { type: string }
+                address: { type: string }
+                order_date: { type: string, example: '2026-09-24 10:00:00' }
+                amount_type: { $ref: '#/components/schemas/AmountType' }
+                total_amount: { type: number }
+                items:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      sku: { type: string }
+                      name: { type: string }
+                      qty: { type: integer, default: 1 }
+                      price: { type: number }
+            example:
+              customer_name: Amit Sharma
+              phone: '9123456780'
+              address: 12 Dharampeth, Nagpur
+              amount_type: COD
+              items:
+                - { sku: MNG-1KG, name: Mango 1kg, qty: 2, price: 150 }
+                - { sku: BAN-12, name: Banana dozen, qty: 1, price: 60 }
+      responses:
+        '201': { $ref: '#/components/responses/OrderDetail' }
+        '422': { $ref: '#/components/responses/Error' }
+
+  /admin/orders/{id}:
+    get:
+      tags: [Admin - Orders]
+      summary: Order details (items, bill, OTP, timeline)
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { $ref: '#/components/responses/OrderDetail' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /admin/orders/{id}/validate:
+    post:
+      tags: [Admin - Orders]
+      summary: Validate a New order (New → Pending)
+      description: Pick which items are actually being sent. Get the item ids from GET /admin/orders/{id}.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                item_ids:
+                  type: array
+                  items: { type: integer }
+            example: { item_ids: [1, 2] }
+      responses:
+        '200': { $ref: '#/components/responses/OrderDetail' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /admin/orders/{id}/assign:
+    post:
+      tags: [Admin - Orders]
+      summary: Assign to a delivery boy
+      description: Allowed when the order is Pending or OutForDelivery. Generates the customer OTP if missing.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [delivery_boy_id]
+              properties:
+                delivery_boy_id: { type: integer }
+                address: { type: string }
+                drop_instructions: { type: string }
+                expected_at: { type: string, example: '2026-09-24 18:00:00' }
+            example: { delivery_boy_id: 2, drop_instructions: Call before arriving, expected_at: '2026-09-24 18:00:00' }
+      responses:
+        '200': { $ref: '#/components/responses/OrderDetail' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /admin/orders/{id}/billing:
+    post:
+      tags: [Admin - Orders]
+      summary: Update billing (amount type, total, payment mode, bill photo)
+      description: Send JSON, or multipart/form-data to include a bill photo. Only the fields sent are changed.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BillingFields' }
+            example: { amount_type: COD, total_amount: 360, payment_mode: Cash }
+          multipart/form-data:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/BillingFields'
+                - type: object
+                  properties:
+                    bill_photo: { type: string, format: binary, description: 'JPG, PNG, WEBP or PDF, max 5 MB' }
+      responses:
+        '200': { $ref: '#/components/responses/OrderDetail' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+
+  /admin/orders/{id}/cancel:
+    post:
+      tags: [Admin - Orders]
+      summary: Cancel an order
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, default: Cancelled by admin }
+            example: { reason: Customer not reachable }
+      responses:
+        '200': { $ref: '#/components/responses/OrderDetail' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /admin/stats:
+    get:
+      tags: [Admin - Orders]
+      summary: Dashboard counts
+      responses:
+        '200':
+          description: Counts by status and today's totals
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                  by_status: { New: 0, Pending: 1, OutForDelivery: 0, Delivered: 1, Cancelled: 0 }
+                  delivered_today: 1
+                  collected_today: 360
+
+  # ------------------------------------------------------ Delivery boy app
+  /my/orders:
+    get:
+      tags: [Delivery boy app]
+      summary: My assigned orders
+      parameters:
+        - name: status
+          in: query
+          description: '`active` = Pending + OutForDelivery (default), `done` = Delivered + Cancelled, `all`'
+          schema: { type: string, enum: [active, done, all], default: active }
+      responses:
+        '200': { $ref: '#/components/responses/OrderList' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /my/orders/{id}:
+    get:
+      tags: [Delivery boy app]
+      summary: One of my orders
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { $ref: '#/components/responses/OrderDetail' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /my/orders/{id}/start:
+    post:
+      tags: [Delivery boy app]
+      summary: Start delivery (Pending → OutForDelivery)
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { $ref: '#/components/responses/OrderDetail' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /my/orders/{id}/cancel:
+    post:
+      tags: [Delivery boy app]
+      summary: Cancel delivery (reason required)
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+            example: { reason: Customer not at home }
+      responses:
+        '200': { $ref: '#/components/responses/OrderDetail' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+
+  /my/orders/{id}/deliver:
+    post:
+      tags: [Delivery boy app]
+      summary: Mark delivered (upload bill photo)
+      description: |
+        multipart/form-data. `bill_photo` is required. `otp` is the customer's 4-digit code
+        (required only when `require_otp` is true in config.php).
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [amount_collected, payment_mode, bill_photo]
+              properties:
+                amount_collected: { type: number, example: 360 }
+                payment_mode: { type: string, enum: [Cash, UPI, Card] }
+                bill_photo: { type: string, format: binary, description: 'JPG, PNG, WEBP or PDF, max 5 MB' }
+                signature: { type: string, format: binary, description: Optional customer signature image }
+                otp: { type: string, example: '4821' }
+      responses:
+        '200': { $ref: '#/components/responses/OrderDetail' }
+        '409': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+
+  # --------------------------------------------------------------- Shopify
+  /webhooks/shopify/orders-create:
+    post:
+      tags: [Shopify]
+      summary: Shopify "Order creation" webhook
+      description: |
+        Creates a `New` order from a Shopify order payload. Duplicates (Shopify retries) return the
+        existing order id. If `SHOPIFY_WEBHOOK_SECRET` is set, the `X-Shopify-Hmac-Sha256` header must match.
+      security: []
+      parameters:
+        - name: X-Shopify-Hmac-Sha256
+          in: header
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+            example:
+              id: 820982911946154500
+              created_at: '2026-09-24T10:00:00+05:30'
+              total_price: '360.00'
+              financial_status: pending
+              customer: { first_name: Amit, last_name: Sharma, phone: '9123456780' }
+              shipping_address: { name: Amit Sharma, address1: 12 Dharampeth, city: Nagpur, province: Maharashtra, zip: '440010', phone: '9123456780' }
+              line_items:
+                - { sku: MNG-1KG, title: Mango 1kg, quantity: 2, price: '150.00' }
+      responses:
+        '201':
+          description: Order created
+          content:
+            application/json:
+              example: { success: true, order_id: 5 }
+        '200':
+          description: Already received (duplicate)
+          content:
+            application/json:
+              example: { success: true, order_id: 5, duplicate: true }
+        '401': { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Token from POST /login
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, example: 1 }
+
+  schemas:
+    Status:
+      type: string
+      enum: [New, Pending, OutForDelivery, Delivered, Cancelled]
+    AmountType:
+      type: string
+      enum: [Prepaid, COD, Partial]
+    BillingFields:
+      type: object
+      properties:
+        amount_type: { $ref: '#/components/schemas/AmountType' }
+        total_amount: { type: number }
+        payment_mode: { type: string, enum: [Cash, UPI, Card] }
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        fname: { type: string }
+        lname: { type: string }
+        email: { type: string }
+        phone: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        role: { type: string, enum: [admin, delivery] }
+        is_active: { type: boolean }
+    OrderRow:
+      type: object
+      properties:
+        id: { type: integer }
+        shopify_id: { type: string, nullable: true }
+        customer_name: { type: string }
+        address: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/Status' }
+        expected_at: { type: string, nullable: true }
+        amount_type: { type: string, nullable: true }
+        total_amount: { type: number }
+        item_count: { type: integer }
+        items_summary: { type: string, example: '2x Mango 1kg, 1x Banana dozen' }
+        delivery_boy: { type: string, nullable: true }
+        created_at: { type: string }
+    Order:
+      type: object
+      properties:
+        id: { type: integer }
+        shopify_id: { type: string, nullable: true }
+        customer_name: { type: string }
+        address: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        order_date: { type: string }
+        status: { $ref: '#/components/schemas/Status' }
+        assigned_to:
+          type: object
+          nullable: true
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            phone: { type: string, nullable: true }
+        drop_instructions: { type: string, nullable: true }
+        expected_at: { type: string, nullable: true }
+        amount_type: { type: string, nullable: true }
+        total_amount: { type: number }
+        payment_mode: { type: string, nullable: true }
+        admin_bill_photo: { type: string, nullable: true }
+        cancel_reason: { type: string, nullable: true }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              sku: { type: string, nullable: true }
+              name: { type: string }
+              qty: { type: integer }
+              price: { type: number }
+              selected: { type: boolean }
+        bill:
+          type: object
+          nullable: true
+          properties:
+            amount_collected: { type: number }
+            payment_mode: { type: string }
+            photo_url: { type: string }
+            signature_url: { type: string, nullable: true }
+            otp_verified: { type: boolean }
+            submitted_by: { type: string }
+            submitted_at: { type: string }
+        delivery_otp: { type: string, nullable: true, description: Admin view only }
+        timeline:
+          type: array
+          items:
+            type: object
+            properties:
+              status: { type: string }
+              note: { type: string, nullable: true }
+              changed_at: { type: string }
+              changed_by: { type: string, nullable: true }
+        created_at: { type: string }
+        updated_at: { type: string }
+
+  responses:
+    Ok:
+      description: Success
+      content:
+        application/json:
+          example: { success: true }
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              message: { type: string, example: Invalid or expired token }
+    OrderList:
+      description: Orders
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean }
+              data:
+                type: array
+                items: { $ref: '#/components/schemas/OrderRow' }
+    OrderDetail:
+      description: The order
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean }
+              data: { $ref: '#/components/schemas/Order' }
