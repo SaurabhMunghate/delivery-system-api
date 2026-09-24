@@ -91,3 +91,4 @@ Now log in on the app as `ram@gmail.com` / `ram@123` and the order appears.
 * Bill photos are served from `/uploads/<random-name>`. The names can't be guessed, but anyone with the link can open the file. If you need stricter access, move `uploads/` outside the web root and serve files through an authenticated endpoint.
 * To make the OTP mandatory at the doorstep, set `require_otp` to `true` in `config.php`. The admin sees each order's OTP in `GET /api/admin/orders/{id}` and can share it with the customer.
 * Not built yet: the admin **web dashboard** UI. All the APIs it needs are ready above. Push notifications (Expo push / FCM) and live GPS are also not built.
+# delivery-system-api
